@@ -9,6 +9,10 @@ function pull() {
     fi
 
     if [ "$use_local" = true ]; then
+        if [ "$#" -gt 0 ]; then
+          local repo_name=$1 
+          echo "repo ${repo_name} is behind local bare, pulling..."  
+        fi
         git pull bare main --quiet
         return 0
     fi
