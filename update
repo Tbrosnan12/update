@@ -147,7 +147,10 @@ elif [ "$use_local" = true ]; then
     if ! git remote -v | grep "bare" > /dev/null 2>&1; then
         echo "Warning you need to set a "bare" repo before syncing locally"
         exit 1
+    else
+        git branch --set-upstream-to=bare/main --quiet
     fi
+
 fi
 
 #Starting script
@@ -224,6 +227,12 @@ if [ ! "$permanent_exclude" = true ]; then
             fi
         fi      
     done
+fi
+
+#UNDO SETTING BARE TO UPSTREAM
+if [ "$use_local"=true ]; then
+    git branch --unset-upstream  --quiet
+    git branch --set-upstream-to=origin/main  --quiet
 fi
 
 #echo what has happened :)
