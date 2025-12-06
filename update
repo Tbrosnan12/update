@@ -155,7 +155,7 @@ fi
 
 #Starting script
 dir=$(git rev-parse --show-toplevel)    #directory of top directory in the git repo tree
-repo_name=$(git remote -v | head -n 1 | awk -F '/' '{print $NF}' | awk -F '.git' '{print $1}')
+repo_name=$(git remote -v | head -n 1 | awk -F '/' '{print $NF}' | awk -F '.git ' '{print $1}')
 git_username=$(git config user.name)
 
 #see if there are files to exclude from adding 
