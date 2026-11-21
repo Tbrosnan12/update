@@ -1,6 +1,6 @@
 # Update
 
-This is a repo holding scripts for auto syncing git repositories. 
+This is a repo holding scripts for auto syncing git repositories (for lazy people like me) 
 
 Tired of having to remember countless git commands just to push the comma you added? Tired of having "merger issues" when you edit two completely seperate files? Tired of having to enter some god awful terminal editor to type your commit message? Then update is the tool for you! !
 
