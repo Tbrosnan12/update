@@ -52,7 +52,6 @@ function push() {
         local repo_name=$1
         echo "repo ${repo_name} is ahead of origin, pushing..."     
     fi
-    git remote set-url origin git@github.com:${git_username}/${repo_name}.git 
     git push origin main --quiet
 }
 
@@ -144,6 +143,18 @@ if [ "$use_local" != true ] && git remote | grep -qx "bare"; then
     use_local=true
 fi
 
+
+# Warning checks before starting script 
+if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    echo "Warning: you are not in a git repo directory"
+    exit 1
+elif [ "$use_local" = true ]; then
+    if ! git remote | grep -qx "bare"; then
+        echo "Warning you need to set a bare repo before syncing locally"
+        exit 1
+    fi
+fi
+
 # If origin is https, switch it to ssh once so pushes don't ask for a password.
 # ssh/bare remotes are left untouched.
 if [ "$check" != true ] && [ "$use_local" != true ]; then
@@ -157,25 +168,9 @@ if [ "$check" != true ] && [ "$use_local" != true ]; then
 fi
 
 
-# Warning checks before starting script 
-if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-    echo "Warning: you are not in a git repo directory"
-    exit 1
-elif [ "$use_local" = true ]; then
-    if ! git remote -v | grep "bare" > /dev/null 2>&1; then
-        echo "Warning you need to set a "bare" repo before syncing locally"
-        exit 1
-    else
-        git branch --set-upstream-to=bare/main --quiet
-    fi
-
-fi
-
 #Starting script
 dir=$(git rev-parse --show-toplevel)    #directory of top directory in the git repo tree
-repo_name=$(git remote -v | head -n 1 | awk -F '/' '{print $NF}' | awk -F '.git ' '{print $1}')
-git_username=$(git config user.name)
-
+repo_name=$(basename "$(git remote get-url origin)" .git)
 #see if there are files to exclude from adding 
 if [ ${#excluding_files[@]} -ne 0 ]; then
     if [ ! -f ".gitignore" ]; then
