@@ -13,7 +13,7 @@ function pull() {
           local repo_name=$1 
           echo "repo ${repo_name} is behind local bare, pulling..."  
         fi
-        git pull bare main --quiet
+        git pull bare main --quiet  || status=pull_failed
         return 0
     fi
 
@@ -21,15 +21,15 @@ function pull() {
         local repo_name=$1 
         echo "repo ${repo_name} is behind origin, pulling..."  
     fi
-    git pull origin main --quiet
+    git pull origin main --quiet  || status=pull_failed
 }
 
 function commit() {
     git add --all > /dev/null
     if [ -z "$commit_message" ]; then
-        git commit -m "auto-sync" > /dev/null && commited=true
+        git commit -m "auto-sync" > /dev/null || echo "commit failed :("
     else
-        git commit -m "${commit_message}" > /dev/null && commited=true
+        git commit -m "${commit_message}" > /dev/null || echo "commit failed :("
     fi
 }
 
@@ -44,7 +44,7 @@ function push() {
             local repo_name=$1
             echo "repo ${repo_name} is ahead of local bare, pushing..."     
         fi
-        git push bare main --quiet
+        git push bare main --quiet || status=push_failed
         return 0
     fi
 
@@ -52,7 +52,7 @@ function push() {
         local repo_name=$1
         echo "repo ${repo_name} is ahead of origin, pushing..."     
     fi
-    git push origin main --quiet
+    git push origin main --quiet || status=push_failed
 }
 
 function fetch() {
@@ -73,14 +73,14 @@ usage() {
   echo "  -e, --exclude FILES...     Exclude FILES from this push"
   echo "  -h, --help                 Display this help message and exit"
   echo "  -p, --permanently-exclude  Permanently exclude FILES from future pushes"
-  echo "  -l, --local                Commit to a local base repo instead of main, must be called base"
+  echo "  -l, --local                Commit to a local bare repo instead of main, must be called bare"
   echo
-  exit 1
+  exit 0
 }
 
 
-# Use `getopt` to handle both short and long options
-TEMP=$(getopt -o cphe:l --long check,permanently-exclude,help,exclude:,local -n 'scriptname' -- "$@")
+# Use `getopt` to handle both short and long options 
+TEMP=$(getopt -o cp:he:l --long check,permanently-exclude:,help,exclude:,local -n 'scriptname' -- "$@")
 if [ $? != 0 ]; then usage; exit 1; fi
 
 eval set -- "$TEMP"
@@ -89,6 +89,7 @@ eval set -- "$TEMP"
 check=false
 use_local=false
 excluding_files=()
+permanent_exclude=false
 while true; do
   case "$1" in
     -c|--check)
@@ -137,12 +138,6 @@ while true; do
   esac
 done
 
-# Checking where we should be committing
-# Auto use the local bare repo if one is configured
-if [ "$use_local" != true ] && git remote | grep -qx "bare"; then
-    use_local=true
-fi
-
 
 # Warning checks before starting script 
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
@@ -154,6 +149,14 @@ elif [ "$use_local" = true ]; then
         exit 1
     fi
 fi
+
+# Checking where we should be committing
+# Auto use the local bare repo if one is configured
+if [ "$use_local" != true ] && git remote | grep -qx "bare"; then
+    use_local=true
+fi
+
+
 
 # If origin is https, switch it to ssh once so pushes don't ask for a password.
 # ssh/bare remotes are left untouched.
@@ -170,95 +173,92 @@ fi
 
 #Starting script
 dir=$(git rev-parse --show-toplevel)    #directory of top directory in the git repo tree
-repo_name=$(basename "$(git remote get-url origin)" .git)
+repo_name=$(basename "$(git remote get-url origin || git remote get-url bare 2>/dev/null)" .git)
+
 #see if there are files to exclude from adding 
+added_files=()
 if [ ${#excluding_files[@]} -ne 0 ]; then
-    if [ ! -f ".gitignore" ]; then
-        touch $dir/.gitignore
-    fi
+    [ -f "$dir/.gitignore" ] || touch "$dir/.gitignore"
     for file in "${excluding_files[@]}"; do
-        if [ ! -z $file ] && [ -f $file ]; then
-            if ! grep -q "$file" "$dir/.gitignore"; then
-                git rm --cached $file  > /dev/null 2>&1
-                echo -e "\n$file" >> "$dir/.gitignore"
-                echo "ignoring $file"
-            else
+        if [ -n "$file" ] && [ -f "$file" ]; then
+            if grep -qxF "$file" "$dir/.gitignore"; then
                 echo "$file already in .gitignore"
+            elif [ "$check" = true ]; then
+                echo "would ignore $file"
+            else
+                git rm --cached "$file" > /dev/null 2>&1
+                echo "$file" >> "$dir/.gitignore"
+                added_files+=("$file")
+                echo "ignoring $file"
             fi
-        fi      
+        fi
     done
 fi
 
 #check if there is a commit message
 commit_message=""
-if [ "$#" -gt 1 ]; then
-    for i in $@; do
-        commit_message+="${i} " 
-    done
+if [ "$#" -gt 0 ]; then
+    commit_message="$*"
 fi
 
+
+remote_branch=origin/main
+if [ "$use_local" = true ]; then remote_branch=bare/main; fi
 #Fetch origin to compare 
 fetch
 
-if git status | grep "nothing to commit" > /dev/null 2>&1; then     # do nothing if nothing to add 
-    if git status | grep "up to date with" > /dev/null 2>&1; then    #May be nothing to add, but still be a merger issue 
-        status=up_to_date
-    elif git status | grep behind > /dev/null 2>&1; then  # pull from origin if behind
-        pull "${repo_name}"
-    elif git status | grep ahead > /dev/null 2>&1; then  # pull from origin if behind
-        push "${repo_name}"   
-    else
-        status=merger_issue
-    fi
-else
+# Commit if there is something to commit and we are not just checking
+dirty=false  # dirty means something happened 
+if [ -n "$(git status --porcelain)" ]; then dirty=true; fi
+if [ "$dirty" = true ] && [ "$check" != true ]; then
     commit
-    if git status | grep "diverged" > /dev/null 2>&1; then
-        status=merger_issue
-    elif git status | grep behind > /dev/null 2>&1; then  # pull from origin if behind
-        pull "${repo_name}"
-    elif git status | grep "up to date with" > /dev/null 2>&1; then    #Make sure there is no merger issue 
-        status=up_to_date
-    elif git status | grep ahead > /dev/null 2>&1; then   # push to origin if ahead
-        push "${repo_name}"
-    else
-        echo "This is a never before seen bug please contact the owner of the update repo"
-    fi
 fi
 
-#If we were just checking and we commited, undo last commit
-if [ "$check" = true ] && [ "$commited" = true ]; then
-    echo "Checked what needs to be done:"
-    git reset --soft HEAD~1 > /dev/null 2>&1
+behind=$(git rev-list --count HEAD..$remote_branch 2>/dev/null || echo 0)  #Count how many changes behind origin/base we are
+ahead=$(git rev-list --count $remote_branch..HEAD 2>/dev/null || echo 0) #Count how many changes ahead of origin/base we are
+
+
+
+if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
+    status=merger_issue
+elif [ "$behind" -gt 0 ]; then
+    pull "$repo_name"
+elif [ "$ahead" -gt 0 ] || [ "$dirty" = true ]; then
+    push "$repo_name"
+else
+    status=up_to_date
 fi
+
 
 #If we are only temporarily are exliding files then remove them from .gitignore
-if [ ! "$permanent_exclude" = true ]; then
-    for file in "${excluding_files[@]}"; do
-        if [ ! -z $file ] && [ -f $file ]; then
-            if grep -q "$file" "$dir/.gitignore"; then
-                grep -vx "$file" $dir/.gitignore > temp && mv temp $dir/.gitignore
-            fi
-        fi      
+if [ "$permanent_exclude" != true ]  && [ "$check" != true ]; then
+    for file in "${added_files[@]}"; do
+        grep -vxF "$file" "$dir/.gitignore" > "$dir/.gitignore.tmp"
+        mv "$dir/.gitignore.tmp" "$dir/.gitignore"
     done
 fi
 
-#UNDO SETTING BARE TO UPSTREAM
-if [ "$use_local"=true ]; then
-    git branch --unset-upstream  --quiet
-    git branch --set-upstream-to=origin/main  --quiet
-fi
+
 
 #echo what has happened :)
 if [ "${status}" = "up_to_date" ]; then
     echo "No updates needed :)"      
 elif [ "$status" = "merger_issue" ]; then
-    echo "Uh oh seems there is a merger issue :("         
+    echo "Uh oh seems there is a merger issue :("
+elif [ "$status" = "pull_failed" ]; then
+    echo "Pull failed :("
+elif [ "$status" = "push_failed" ]; then
+    echo "Push failed :("
 else
     if [ "$check" = true ]; then
-        if [ "$status"="pulled" ]; then
+        if [ "$status" = "pulled" ]; then
             echo "repo ${repo_name} is behind origin, need to pull"
-        elif [ "$status"="pushed" ]; then
-            echo "repo ${repo_name} is ahead origin, need to push"
+        elif [ "$status" = "pushed" ]; then
+            if [ "$dirty" = true ]; then
+                echo "repo ${repo_name} has changes, need to commit and push"
+            else
+                echo "repo ${repo_name} is ahead $remote_branch, need to push"
+            fi
         fi
     else
         echo "All done!"
@@ -266,7 +266,7 @@ else
 fi
 
 # Try fix merger issue if wanted
-if [ "$status" = "merger_issue" ]; then
+if [ "$status" = "merger_issue" ] && [ "$check" != true ]; then
     current_branch=$(echo "$(git --no-pager branch)" | awk -F '*' '{print $NF}')
     origin_branch=$(git --no-pager branch -a | grep '\->' | awk -F 'HEAD ->' '{print $NF}')
 
@@ -275,18 +275,17 @@ if [ "$status" = "merger_issue" ]; then
     echo "${diff_list}"
 
     read -p "Do you want to attempt basic merger? (Y/n) " response
-    if [ "$response" != "Y" ]; then
+    if [ "$response" = "n" ] || [ "$response" = "N" ]; then 
         exit 1
+    fi
+
+    git pull --no-rebase --no-edit $remote_branch --quiet
+    if [ $? -ne 0 ]; then
+        git diff --name-only --diff-filter=U
+        echo "Merge unsuccesfull :(" 
     else
-        git config pull.rebase false
-        git pull --no-edit origin main --quiet
-        if [ $? -ne 0 ]; then
-            git pull origin main | grep "CONFLICT"
-            echo "Merge unsuccesfull :(" 
-        else
-            push
-            echo "Merge succsessful!"
-        fi
+        push
+        echo "Merge succsessful!"
     fi 
 fi
 
