@@ -25,12 +25,11 @@ function pull() {
 }
 
 function commit() {
-    commited=true
     git add --all > /dev/null
     if [ -z "$commit_message" ]; then
-        git commit -m "auto-sync" > /dev/null
+        git commit -m "auto-sync" > /dev/null && commited=true
     else
-        git commit -m "${commit_message}" > /dev/null  #add optional commit message 
+        git commit -m "${commit_message}" > /dev/null && commited=true
     fi
 }
 
@@ -139,6 +138,25 @@ while true; do
   esac
 done
 
+# Checking where we should be committing
+# Auto use the local bare repo if one is configured
+if [ "$use_local" != true ] && git remote | grep -qx "bare"; then
+    use_local=true
+fi
+
+# If origin is https, switch it to ssh once so pushes don't ask for a password.
+# ssh/bare remotes are left untouched.
+if [ "$check" != true ] && [ "$use_local" != true ]; then
+    url=$(git remote get-url origin 2>/dev/null)
+    if [[ "$url" == https://* ]]; then
+        rest=${url#https://}     # github.com/you/repo.git
+        rest=${rest#*@}          # drop any user/token baked into the url
+        git remote set-url origin "ssh://git@${rest}"
+        echo "origin was https, switched to ssh://git@${rest}"
+    fi
+fi
+
+
 # Warning checks before starting script 
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
     echo "Warning: you are not in a git repo directory"
@@ -180,7 +198,7 @@ fi
 commit_message=""
 if [ "$#" -gt 1 ]; then
     for i in $@; do
-        commit_message+="${i} "      
+        commit_message+="${i} " 
     done
 fi
 
